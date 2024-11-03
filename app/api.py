@@ -225,13 +225,20 @@ async def post_login(req:Request, ss=Depends(DB.getss)):
 @router.get("/logout")
 async def get_logout(req:Request, ss=Depends(DB.getss)):
     try:
+        # 로그아웃 위치
+        referer=req.headers.get("referer")
+
         print("logout 요청 받음")
         # delete refresh 
         refresh_token = req.cookies.get(SECURITY.refresh_name)
         await CRUD.delete_refresh_by_token(refresh_token, ss)
 
+        if referer:
+            resp = RedirectResponse(referer)
+        else:
+            resp = Response(status_code=200)
+            
         # delete token
-        resp = Response(status_code=200)
         resp.delete_cookie(
             key=SECURITY.access_name,
             domain=".varzeny.com",
