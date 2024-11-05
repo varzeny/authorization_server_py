@@ -5,8 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 # module
-from app.database import Manager as DB
-from app.util import hash
 
 # define
 async def read_account_by_refresh(refresh_token:str, ss:AsyncSession):
@@ -20,14 +18,54 @@ async def read_account_by_refresh(refresh_token:str, ss:AsyncSession):
     return respData
 
 
+async def create_refresh(account_id:int, refresh_token:str, ss:AsyncSession):
+    resp = await ss.execute(
+        statement=text(
+            "INSERT INTO refresh(account_id, token) VALUES(:account_id, :token)"
+        ),
+        params={
+            "account_id":account_id,
+            "token":refresh_token
+        }
+    )
+    await ss.commit()
+    return True
+
+
 async def read_refresh_by_token(refresh_token:str, ss:AsyncSession):
     resp = await ss.execute(
         statement=text(
-            "SELECT account_id, role FROM refresh WHERE token=:token"
+            "SELECT * FROM refresh WHERE token=:token"
         ),
         params={"token":refresh_token}
     )
+    return resp.mappings().fetchone()
+
+
+async def delete_refresh_by_id(id:int, ss:AsyncSession):
+    resp = await ss.execute(
+        statement=text(
+            "DELETE FROM refresh WHERE id=:id"
+        ),
+        params={"id":id}
+    )
+    await ss.commit()
     return resp
+
+
+async def delete_refresh_by_token(refresh_token:str, ss:AsyncSession):
+    resp = await ss.execute(
+        statement=text(
+            "DELETE FROM refresh WHERE token=:token"
+        ),
+        params={
+            "token":refresh_token
+        }
+    )
+    await ss.commit()
+    return
+
+
 
 
 async def check_email(email:str, ss:AsyncSession):
@@ -41,7 +79,7 @@ async def check_email(email:str, ss:AsyncSession):
     return respData
 
 
-async def create_account(email:str, name:str, pw:str, ss:AsyncSession):
+async def create_account(email:str, name:str, pw_hashed:str, ss:AsyncSession):
     resp = await ss.execute(
         statement=text(
             "INSERT INTO account(role_id, email, pw_hashed, name) VALUES(:role_id, :email, :pw_hashed, :name)"
@@ -49,7 +87,7 @@ async def create_account(email:str, name:str, pw:str, ss:AsyncSession):
         params={
             "role_id":2,
             "email":email,
-            "pw_hashed":hash.create_hash(pw),
+            "pw_hashed":pw_hashed,
             "name":name
         }
     )
@@ -70,29 +108,3 @@ async def read_account_by_email(email:str, ss:AsyncSession):
     print(respData)
     return respData
 
-
-async def create_refresh(account_id:int, refresh_token:str, ss:AsyncSession):
-    resp = await ss.execute(
-        statement=text(
-            "INSERT INTO refresh(account_id, token) VALUES(:account_id, :token)"
-        ),
-        params={
-            "account_id":account_id,
-            "token":refresh_token
-        }
-    )
-    await ss.commit()
-    return True
-
-
-async def delete_refresh_by_token(refresh_token:str, ss:AsyncSession):
-    resp = await ss.execute(
-        statement=text(
-            "DELETE FROM refresh WHERE token=:token"
-        ),
-        params={
-            "token":refresh_token
-        }
-    )
-    await ss.commit()
-    return

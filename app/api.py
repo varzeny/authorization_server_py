@@ -10,59 +10,25 @@ from random import randint
 
 
 # module
-from app.database import Manager as DB
-from app.security import Manager as SECURITY
+from app.core.database.asyncmy import DB
+from app.core.messaging.email import EMAIL
+from app.core.security.token.refresh_token import RefreshToken
+from app.core.security.token.access_token import AccessToken
+from app.core.security.token.signup_token import SignupToken
+from app.core.security.hash import create_hash, verify_hash
+from app.core.security.dependency import admin_only, user_only, guest_only
+
 from app import crud as CRUD
-from app.util import email as EMAIL
-from app.util import hash as HASH
 
 
 # define
 router = APIRouter()
-template = Jinja2Templates(directory="app/template")
-
-
-# dependency
-async def guest_only(req:Request):
-    t = req.cookies.get(SECURITY.access_name)
-    if t and SECURITY.verify_access_token(t):
-        print("게스트 아님")
-        raise HTTPException(status_code=401, detail="you are not guest")
-    else:
-        print("게스트 맞음")
-        return
-
-
-async def user_only(req:Request):
-    access_et = req.cookies.get(SECURITY.access_name)
-    if access_et and SECURITY.verify_access_token(access_et):
-        print("유저임")
-        return
-    else:
-        print("access_token 없음")
-        raise HTTPException(status_code=401, detail="access_token doesn't exist")
-
-
-async def admin_only(req:Request):
-    access_et = req.cookies.get(SECURITY.access_name)
-    access_dt = SECURITY.verify_access_token(access_et)
-    if access_et and access_dt:
-        print(access_dt)
-        if access_dt.get("role_id")==1:
-            print("관리자임")
-            return
-        else:
-            print("엑세스 토큰은 있는데, 관리자가 아님")
-            raise HTTPException(status_code=403, detail="you are not admin")
-    else:
-        print("access_token 없음")
-        raise HTTPException(status_code=401, detail="access_token doesn't exist")
+template = Jinja2Templates(directory="template")
 
 
 # endpoint
 @router.get("/")
 async def get_root(req:Request):
-
     resp = template.TemplateResponse(
         request=req,
         name="root.html",
@@ -73,8 +39,7 @@ async def get_root(req:Request):
 
 
 @router.get("/test")
-async def get_root(req:Request, t=Depends(user_only)):
-
+async def get_root(req:Request, at=Depends(user_only)):
     resp = template.TemplateResponse(
         request=req,
         name="test.html",
@@ -85,8 +50,7 @@ async def get_root(req:Request, t=Depends(user_only)):
 
 
 @router.get("/test-admin")
-async def get_root(req:Request, t=Depends(admin_only)):
-
+async def get_root(req:Request, at=Depends(admin_only)):
     resp = template.TemplateResponse(
         request=req,
         name="test_admin.html",
@@ -97,36 +61,38 @@ async def get_root(req:Request, t=Depends(admin_only)):
 
 
 @router.post("/oauth/token/access")
-async def post_root(req:Request, ss=Depends(DB.getss)):
+async def post_root(req:Request, ss=Depends(DB.get_ss)):
 
-    # 기존거 있으면 제거
-
-    # refresh_token 있는지?
-    refresh_token = req.cookies.get(SECURITY.refresh_name)
+    # 클라이언트가 refresh_token 가지고 있는지?
+    refresh_token = req.cookies.get(RefreshToken.key)
     if not refresh_token:
         print("클라이언트에 리프레쉬 토큰 없음")
         return Response(status_code=401, content="Refresh token not found")
     
-    # refresh_token 검증
+    # 유효한 refresh_token 인지?
+    refresh = await CRUD.read_refresh_by_token(refresh_token, ss)
+    
+    if not RefreshToken.verify_token(refresh):
+        await CRUD.delete_refresh_by_id(refresh.get("id"), ss)
+        return Response(status_code=401, content="유효하지 않은 refresh_token")
+
     account = await CRUD.read_account_by_refresh(refresh_token, ss)
     if not account:
-        print("DB에 리프레쉬 토큰 없음")
-        return Response(status_code=401, content="Doesn't exist refresh token")
-    
-    # refresh_token 기간확인
+        print("해당 리프레쉬토큰을 가진 계정이 없음")
+        return Response(status_code=401, content="Doesn't exist account")
     
     # access_token 재발급
-    new_access_token = SECURITY.create_access_token( {
-        "id":account.get("id"),
-        "role_id":account.get("role_id"),
-        "name":account.get("name")
-    } )
-    
+    new_access_token = AccessToken(
+        sub=account.get("id"),
+        roles=account.get("role_id"),
+        name=account.get("name")
+    )
+
     resp = Response(status_code=200)
     resp.set_cookie(
-        key=SECURITY.access_name,
-        value=new_access_token,
-        max_age=SECURITY.access_expmin*60,
+        key=AccessToken.key,
+        value=new_access_token.create_jwt(),
+        max_age=AccessToken.exp_min*60,
         httponly=True,
         secure=True,
         domain=".varzeny.com",
@@ -138,14 +104,11 @@ async def post_root(req:Request, ss=Depends(DB.getss)):
 
 
 
-
-
 # login & signup ##################################################
 
 @router.get("/login/page")
-async def get_login_page(req:Request, t=Depends(guest_only)):
+async def get_login_page(req:Request, at=Depends(guest_only)):
     referer = req.headers.get("referer")
-
     try:
         resp = template.TemplateResponse(
             request=req,
@@ -165,7 +128,7 @@ async def get_login_page(req:Request, t=Depends(guest_only)):
 
 
 @router.post("/login")
-async def post_login(req:Request, ss=Depends(DB.getss)):
+async def post_login(req:Request, at=Depends(guest_only), ss=Depends(DB.get_ss)):
     try:
         # DB 확인
         reqData = await req.form()
@@ -174,40 +137,36 @@ async def post_login(req:Request, ss=Depends(DB.getss)):
         if not account:
             raise Exception("doesn't exist account")
 
-        if not HASH.verify_hash(reqData.get("pw"), account.get("pw_hashed")):
+        if not verify_hash(reqData.get("pw"), account.get("pw_hashed")):
             raise Exception("wrong PW")
 
         # refresh_token
-        refresh_token = SECURITY.create_refresh_token()
-        if not await CRUD.create_refresh(
-            account.get("id"), 
-            refresh_token, 
-            ss
-        ):
+        refresh_token = RefreshToken(account.get("id"))
+        if not await CRUD.create_refresh(account.get("id"), refresh_token.token, ss):
             raise Exception("create refresh fail")
 
         # access_token
-        access_token = SECURITY.create_access_token( {
-            "id":account.get("id"),
-            "role_id":account.get("role_id"),
-            "name":account.get("name")
-        } )
+        access_token = AccessToken(
+            sub=account.get("id"),
+            roles=account.get("role_id"),
+            name=account.get("name")
+        )
 
         # set cookies
         resp = Response(status_code=200)
         resp.set_cookie(
-            key=SECURITY.refresh_name,
-            value=refresh_token,
-            max_age=SECURITY.refresh_expmin*60,
+            key=RefreshToken.key,
+            value=refresh_token.token,
+            max_age=RefreshToken.exp_min*60,
             httponly=True,
             secure=True,
             domain=".varzeny.com",
             path="/"
         )
         resp.set_cookie(
-            key=SECURITY.access_name,
-            value=access_token,
-            max_age=SECURITY.access_expmin*60,
+            key=AccessToken.key,
+            value=access_token.create_jwt(),
+            max_age=AccessToken.exp_min*60,
             httponly=True,
             secure=True,
             domain=".varzeny.com",
@@ -223,14 +182,14 @@ async def post_login(req:Request, ss=Depends(DB.getss)):
     
 
 @router.get("/logout")
-async def get_logout(req:Request, ss=Depends(DB.getss)):
+async def get_logout(req:Request, at=Depends(user_only), ss=Depends(DB.get_ss)):
     try:
         # 로그아웃 위치
         referer=req.headers.get("referer")
-
         print("logout 요청 받음")
+
         # delete refresh 
-        refresh_token = req.cookies.get(SECURITY.refresh_name)
+        refresh_token = req.cookies.get(RefreshToken.key)
         await CRUD.delete_refresh_by_token(refresh_token, ss)
 
         if referer:
@@ -240,12 +199,12 @@ async def get_logout(req:Request, ss=Depends(DB.getss)):
             
         # delete token
         resp.delete_cookie(
-            key=SECURITY.access_name,
+            key=AccessToken.key,
             domain=".varzeny.com",
             path="/"
         )
         resp.delete_cookie(
-            key=SECURITY.refresh_name,
+            key=RefreshToken.key,
             domain=".varzeny.com",
             path="/"
         )
@@ -264,7 +223,7 @@ async def get_logout(req:Request, ss=Depends(DB.getss)):
 
 
 @router.get("/signup/page")
-async def get_signup_page(req:Request):
+async def get_signup_page(req:Request, at=Depends(guest_only)):
     try:
         resp = template.TemplateResponse(
             request=req,
@@ -273,10 +232,12 @@ async def get_signup_page(req:Request):
             status_code=200
         )
 
+        signup_token = SignupToken()
+
         resp.set_cookie(
-            key=SECURITY.signup_name,
-            value=SECURITY.create_signup_token( {"seq":"1"} ),
-            max_age=SECURITY.signup_expmin*60,
+            key=SignupToken.key,
+            value=signup_token.create_jwt(),
+            max_age=SignupToken.exp_min*60,
             httponly=True,
             secure=True,
             domain=".varzeny.com",
@@ -290,21 +251,20 @@ async def get_signup_page(req:Request):
     
 
 @router.post("/signup/seq")
-async def post_signup_seq(req:Request, ss=Depends(DB.getss)):
+async def post_signup_seq(req:Request, at=Depends(guest_only), ss=Depends(DB.get_ss)):
     try:
-        encoded_token = req.cookies.get(SECURITY.signup_name)
-        decoded_token = SECURITY.verify_signup_token(encoded_token)
+        encoded_signup_token = req.cookies.get(SignupToken.key)
+        signup_token = SignupToken.verify_jwt(encoded_signup_token)
+
         reqData = await req.form()
 
-
-        if not decoded_token.get("seq") == reqData.get("seq"):
-            print(decoded_token.get("seq"),"???",reqData.get("seq"))
+        if not signup_token.seq == int( reqData.get("seq") ):
             raise Exception("토큰과 요청의 seq 가 다름")
         
-        seq = decoded_token.get("seq")
+        seq = signup_token.seq
 
         # email
-        if seq == "1":
+        if seq == 1:
             email_addr = reqData.get("email")
             respData = await CRUD.check_email(email_addr, ss)
             if respData:
@@ -313,44 +273,39 @@ async def post_signup_seq(req:Request, ss=Depends(DB.getss)):
             code = str( randint(10000, 99999) )
 
             if not await EMAIL.send_email(
-                smtp_host=SECURITY.smtp_host,
-                smtp_port=SECURITY.smtp_port,
-                sender_addr=SECURITY.sender_id,
-                sender_pw=SECURITY.sender_pw,
                 receiver_addr=email_addr,
                 subject="Your verify code has arrived.",
-                bodyData=code
+                data=code
             ):
                 raise Exception("이메일 전송 오류")
-
-            decoded_token["email"] = email_addr
-            decoded_token["code"] = code
-            decoded_token["seq"] = "2"
+            
+            signup_token.email = email_addr
+            signup_token.code = code
+            signup_token.seq = 2
 
         
         # code
-        elif seq == "2":
-            if not decoded_token.get("code") == reqData.get("code"):
+        elif seq == 2:
+            if not signup_token.code == reqData.get("code"):
                 raise Exception("토큰과 요청의 code 가 다름")
             
-            decoded_token["seq"] = "3"
+            signup_token.seq = 3
             
 
         # pw
-        elif seq == "3":
-            await CRUD.create_account(decoded_token["email"], reqData.get("name"), reqData.get("pw"), ss)
-            decoded_token["seq"] = "4"
+        elif seq == 3:
+            await CRUD.create_account(signup_token.email, reqData.get("name"), create_hash(reqData.get("pw")), ss)
+            signup_token.seq = 4
         
 
         else:
             raise Exception("등록되지 않은 seq")
     
-        encoded_token = SECURITY.create_signup_token( decoded_token )
-        resp = Response(status_code=200, content="seq"+decoded_token.get("seq"))
+        resp = Response( status_code=200, content="seq"+str(signup_token.seq) )
         resp.set_cookie(
-            key=SECURITY.signup_name,
-            value=encoded_token,
-            max_age=SECURITY.signup_expmin*60,
+            key=SignupToken.key,
+            value=signup_token.create_jwt(),
+            max_age=SignupToken.exp_min*60,
             httponly=True,
             secure=True,
             domain=".varzeny.com",
