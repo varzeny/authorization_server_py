@@ -21,6 +21,7 @@
 ## 구조
 ![구조](./document/auth_arch.png)
 ![구조](./document/auth_erd.png)
+![구조](./document/auth_role.png)
 
 
 ## 환경
