@@ -29,6 +29,8 @@ app.mount(
 app.add_middleware(
     middleware_class=CORSMiddleware,
     allow_origins=["https://*.varzeny.com"],
+    allow_methods=["*"],
+    allow_headers=["*"]
 )
 app.add_middleware( CheckAccessToken )
 
