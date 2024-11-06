@@ -1,8 +1,8 @@
 # main.py
 
 # lib
-
 from fastapi import FastAPI, staticfiles
+from fastapi.middleware.cors import CORSMiddleware
 
 # module
 from app.api import router
@@ -26,6 +26,10 @@ app.mount(
 )
 
 # middleware
+app.add_middleware(
+    middleware_class=CORSMiddleware,
+    allow_origins=["https://*.varzeny.com"],
+)
 app.add_middleware( CheckAccessToken )
 
 # api
