@@ -16,11 +16,14 @@ SETTING = {
     "app":{
         "core":{
             "database":{
-                "name":getenv("APP_CORE_DATABASE_NAME"),
-                "id":getenv("APP_CORE_DATABASE_ID"),
-                "pw":getenv("APP_CORE_DATABASE_PW"),
-                "ip":getenv("APP_CORE_DATABASE_IP"),
-                "port":int(getenv("APP_CORE_DATABASE_PORT")),
+                "session":{
+                    "name":getenv("APP_CORE_DATABASE_SESSION_NAME"),
+                    "id":getenv("APP_CORE_DATABASE_SESSION_ID"),
+                    "pw":getenv("APP_CORE_DATABASE_SESSION_PW"),
+                    "ip":getenv("APP_CORE_DATABASE_SESSION_IP"),
+                    "port":int(getenv("APP_CORE_DATABASE_SESSION_PORT")),
+                },
+                "orm":{},
             },
             "messaging":{
                 "email":{

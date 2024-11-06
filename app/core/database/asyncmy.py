@@ -42,7 +42,7 @@ class Manager:
 
 
 # script
-ENV = SETTING["app"]["core"]["database"]
+ENV = SETTING["app"]["core"]["database"]["session"]
 DB = Manager(
     name=ENV.get("name"),
     id=ENV.get("id"),
