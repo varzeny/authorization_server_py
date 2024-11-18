@@ -28,7 +28,7 @@ app.mount(
 # middleware
 app.add_middleware(
     middleware_class=CORSMiddleware,
-    allow_origins=["https://test.varzeny.com"],
+    allow_origins=["https://varzeny.com", "https://pia.varzeny.com", "https://maze.varzeny.com", "https://test.varzeny.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
